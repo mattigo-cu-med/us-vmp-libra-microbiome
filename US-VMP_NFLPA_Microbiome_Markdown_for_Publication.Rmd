@@ -977,8 +977,7 @@ table(rownames(x1) == meta.in1$SampleID)
 #colnames(x1)
 #head(meta.in1$SampleID)
 #read in pathways
-pathway_abundance <- read.csv(file = '/Volumes/B4_Backup/Stamper_Mac_VA_files_060325/NFL-grant/Metagenomic_data/filtered functional tables/uniref-pathway-filtered-absolute_NFL1.csv', 
-                              row.names = 1, header = T, check.names = F)
+pathway_abundance
 
 Taxa <- t(pathway_abundance)
 Taxa[1:10,1:10]
