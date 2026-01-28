@@ -1,0 +1,1089 @@
+---
+title: "US-VMP_NFLPA_Microbiome"
+author: "Matthew Igo"
+date: "2026-01-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#All packages needed for analysis
+library(reshape2)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(ggpubr)
+library(ANCOMBC)
+library(qiime2R)
+library(phyloseq)
+library(microbiome)
+library(vegan)
+library(knitr)
+library(forcats)
+library(tidyverse)
+library(DT)
+library(outliers)
+library(beeswarm)
+library(WGCNA)
+library(flextable)
+library(magrittr)
+library(dplyr)
+library(tidyheatmaps)
+library(devtools)
+library(ggvegan)
+theme_set(theme_bw())
+
+#set to your working directory to where RData is saved 
+knitr::opts_knit$set(root.dir = normalizePath('/Users/mattigo/Documents/CU_Folders/Projects_Ongoing/NFLPA_Microbiome/Test_folder_2'))
+```
+
+## Set working directory and load data
+```{r location_set, include = T}
+
+#NFLPA VMP metagenomic analysis
+#Loads all data required to run this code
+load("NFLPA_LIBRA_US_VMP_Microbiome.RData")
+new_dir_path <- "Figures" 
+set.seed(64)
+# Check if the directory exists
+if (!dir.exists(new_dir_path)) {
+  # If it doesn't exist, create it
+  dir.create(new_dir_path, recursive = TRUE) 
+  message(paste("Directory created:", new_dir_path))
+} else {
+  message(paste("Directory already exists:", new_dir_path))
+}
+
+
+```
+
+## Demographics and LIBRA 
+
+
+```{r demographics}
+#####Demographics#####
+#summarySE funciton 
+summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=FALSE,
+                      conf.interval=.95, .drop=TRUE) {
+  library(plyr)
+  
+  # New version of length which can handle NA's: if na.rm==T, don't count them
+  length2 <- function (x, na.rm=FALSE) {
+    if (na.rm) sum(!is.na(x))
+    else       length(x)
+  }
+  
+  # This does the summary. For each group's data frame, return a vector with
+  # N, mean, and sd
+  datac <- ddply(data, groupvars, .drop=.drop,
+                 .fun = function(xx, col) {
+                   c(N    = length2(xx[[col]], na.rm=na.rm),
+                     mean = mean   (xx[[col]], na.rm=na.rm),
+                     sd   = sd     (xx[[col]], na.rm=na.rm)
+                   )
+                 },
+                 measurevar
+  )
+  
+  # Rename the "mean" column    
+  datac <- rename(datac, c("mean" = measurevar))
+  
+  datac$se <- datac$sd / sqrt(datac$N)  # Calculate standard error of the mean
+  
+  # Confidence interval multiplier for standard error
+  # Calculate t-statistic for confidence interval: 
+  # e.g., if conf.interval is .95, use .975 (above/below), and use df=N-1
+  ciMult <- qt(conf.interval/2 + .5, datac$N-1)
+  datac$ci <- datac$se * ciMult
+  
+  return(datac)
+}
+
+#Data sets
+######################################################
+#after all these data were combined which was done in the **metadata-wrangling.R** 
+# file, this was written out to check for consistency and make the Libra variable
+libra.alpha.all$LIBRA.score.quartile <- as.factor(libra.alpha.all$LIBRA.score.quartile)
+#Examining the distribution of the libra variable
+#this has already been added to the metadata and will be commented out 
+lib.var <- libra.alpha.all$LIBRA.score
+lib.var <- data.frame(lib.var)
+myCol <- lapply(lib.var, function(x) cut(x, breaks = quantile(x, na.rm = T), labels = FALSE))
+myCol
+myCol$lib.var <- as.factor(myCol$lib.var)
+#the equation could not comute 2 values that should be in Q1 FYI
+#adding in quartile data and writing out for future use
+#write.csv(libra.alpha.all, "LIBRA/LIBRA_variables_noNAs_021125-alpha1.csv", row.names = T)
+#libra.alpha.all$LIBRA.score.quartile <- myCol$lib.var
+#table(myCol)
+########################################################
+#Making some metadata summary plots
+library(table1)
+#p-value function
+pvalue <- function(x, ...) {
+  # Construct vectors of data y, and groups (strata) g
+  x <- x[-length(x)]  # Remove "overall" group
+  y <- unlist(x)
+  g <- factor(rep(1:length(x), times=sapply(x, length)))
+  if (is.numeric(y)) {
+    # For numeric variables, perform a standard 2-sample t-test
+    ano <- aov(y ~ g)
+    p <- summary(ano)[[1]][[5]][1]
+  } else {
+    # For categorical variables, perform a chi-squared test of independence
+    p <- chisq.test(table(y, g))$p.value
+  }
+  # Format the p-value, using an HTML entity for the less-than sign.
+  # The initial empty string places the output on the line below the variable label.
+  c("", sub("<", "&lt;", format.pval(p, digits=2, eps=0.001)))
+  
+}
+p <- aov(Age ~ as.factor(LIBRA.score.quartile) , data = libra.alpha.all)
+summary(p)
+#Demographics
+libra_table_2 = table1(~ Age + Race + Ethnicity + BMI + Homeless.ever + Homeless.Times + Multiple.Mild.TBIs, data = libra.alpha.all)
+libra_table_3 = table1(~ LIBRA.score + Age + Race + Ethnicity + BMI + Homeless.ever + Homeless.Times + Multiple.Mild.TBIs | LIBRA.score.quartile, 
+                       data = libra.alpha.all, overall = c(right="Total"),extra.col=list(`P-value`=pvalue))
+
+#Libra vaiables
+libra_table_2a = table1(~ LIBRA.score +  Obese +  Lifetime_smoking + Diabetes + Hypertension + 
+                          Hypercholesterolemia + Coronary.heart.disease + 
+                          Chronic_kidney_disease +  Current_alcohol + Depressed + Healthy_diet + Physical.activity.H.L, data = libra.alpha.all)
+
+
+t1flex(libra_table_2) %>% 
+  save_as_docx(path="libra_table_2.docx")
+
+t1flex(libra_table_2a) %>% 
+  save_as_docx(path="libra_table_2a.docx")
+
+
+t1flex(libra_table_3) %>% 
+  save_as_docx(path="libra_table_3.docx")
+
+#### 
+####Supplemental Figure 1
+library(ggbeeswarm)
+colvec <- c("#4F94CD", "#FFC125","#CD3333", "#4A4A4A")
+
+p_swarm <- ggplot(data = libra.alpha.all, aes(y = LIBRA.score, x="",color = LIBRA.score.quartile)) +
+  geom_beeswarm(cex = 3)+
+  scale_y_continuous(breaks = seq(0, 10, by=2))+
+  scale_color_manual(values = colvec)+
+  guides(color = guide_legend(reverse = TRUE))+
+  labs(y="LIBRA Score", x="LIBRA Score Distribution", color="LIBRA Score Quartile")+
+  theme_bw()
+
+print(p_swarm)
+ggsave("Figures/S1_LIBRA_swarm_figure.jpeg", p_swarm, w=6, h=6, units="in")
+
+
+
+```
+
+## Alpha and Beta Diversity
+
+
+```{r alpha_beta}
+####Figure 1 Alpha and Beta
+##############Alpha#####
+#Alpha plots
+libra.alpha.all$LIBRA.score.quartile <- factor(libra.alpha.all$LIBRA.score.quartile)
+melt.libra.alpha <- melt(libra.alpha.all, id.vars = c("SampleID", "LIBRA.score", "LIBRA.score.quartile"), 
+                         variable.name = "alpha", measure.vars = c("observed_otus", "shannon"))
+new_labels <- c("observed_otus" = "Observed OTUs", "shannon" = "Shannon Index")
+
+
+
+p1a <- ggplot(data = melt.libra.alpha %>% dplyr::filter(alpha=="shannon"), aes(x = LIBRA.score, y = value)) +
+  geom_point() + 
+  geom_smooth(se = F, method = "lm") +
+  stat_cor(label.y.npc="top", label.x = 5.25, size = 3)+
+  theme_bw() + 
+  labs(tag = "A", x="LIBRA Score", y="Shannon Index") +
+  theme(plot.tag = element_text(size = 12, face = "bold"))
+
+
+ggsave(paste0("Figures/Figure_1a_Alpha_Points", Sys.Date(),".jpeg"),p1a, height = 10, width = 14, units="in" )
+
+
+p1b <- ggplot(data = melt.libra.alpha %>% dplyr::filter(alpha=="shannon"), aes(x = LIBRA.score.quartile, y = value)) +
+  geom_boxplot(aes(fill = LIBRA.score.quartile)) + 
+  geom_jitter(aes(color = LIBRA.score.quartile)) + 
+  scale_color_manual(values=(colvec)) + 
+  scale_fill_manual(values=(colvec))+
+  theme_bw() + 
+  labs(tag = "B", x="LIBRA Score Quartile", y="Shannon Index") +
+  stat_compare_means(method = "kruskal.test", label.y.npc="top", label.x = 2.75, size = 3) + # Add Kruskal-Wallis p-value
+  theme(plot.tag = element_text(size = 12, face = "bold"),
+        legend.position = "none") 
+ggsave(paste0("Figures/Figure_1b_Alpha_Boxplots", Sys.Date(),".jpeg"),p1b, height = 10, width = 14, units="in" )
+
+#####Beta######
+#next line will determine which metadata is being piped in so make sure to check before proceeding 
+#head(meta.in)
+#matching up metadata with the distance matrix
+ind <- match(x = rownames(x_beta), table = meta.in$SampleID)
+ind1 <- !is.na(ind)
+x1 <- x_beta[ind1,ind1]
+ind2 <- match(x = rownames(x1), table = meta.in$SampleID)
+meta.in1 <- meta.in[ind2,]
+#this next line should be all true - if not, then something is wrong
+table(rownames(x1) == meta.in1$SampleID) 
+#rownames(x1)
+#colnames(x1)
+#meta.in1$SampleID
+#read in taxa
+#head(taxa_species)
+
+Taxa <- t(taxa_species)
+#head(Taxa)
+
+ind1 <- match(x = colnames(x1), table = rownames(Taxa))
+Taxa1 <- Taxa[ind1,]
+#head(Taxa1)
+
+
+#**Special plot** CCA start
+#this code is for coloring dots on biplot, if not wanting that then next 3 lines can be removed
+meta.in$LIBRA.score.quartile <- as.factor(meta.in$LIBRA.score.quartile)
+with(meta.in, levels(LIBRA.score.quartile))
+scl <- 2
+
+#CCA start
+pca_w=capscale(x1~1, data=meta.in1[,-1])
+colvec <- c("#4F94CD", "#FFC125","#CD3333", "#4A4A4A")
+perm_result <- with(meta, adonis2(formula = x_beta~LIBRA.score.quartile+Age+BMI+Homeless.ever+Race+Ethnicity, data = meta, permutations = 999))
+
+ggplot_beta = fortify(pca_w)
+ggplot_beta = ggplot_beta %>% rename(SampleID = label)
+beta_data_set = merge(ggplot_beta, meta.in, by="SampleID")
+p1c = ggplot(beta_data_set, aes(x=MDS1, y=MDS2, color = factor(LIBRA.score.quartile, levels = c("4", "3", "2", "1")))) +
+  geom_point()+
+  theme_bw()+
+  coord_cartesian()+
+  scale_color_manual(values=rev(colvec))+
+  stat_ellipse(type = "norm", linetype = 2) +
+  labs(color = "Libra Quartile", tag = "C") +
+  theme(plot.tag = element_text(size = 12, face = "bold")) +
+  annotate("text",label=paste0("PERMANOVA = ",round(perm_result$`Pr(>F)`[1],2)), x=1.55,y=1.9, size =3.5)
+
+
+ggsave(paste0("Figures/Figure_1c_Beta", Sys.Date(),".jpeg"),p1c, height = 10, width = 14, units="in" )
+
+gg_top = ggarrange(p1a, p1b, ncol=2)
+p1 = ggarrange(gg_top, p1c, nrow=2)
+
+print(p1)
+ggsave(paste0("Figures/Figure_1_Alpha_Beta_Diversity", Sys.Date(),".jpeg"),p1, height = 8, width = 7, units="in" )
+
+
+
+
+
+```
+
+
+## Differential Abundance
+```{r abundance }
+
+#####Figure 2 Heatmap and DEA#####
+#MaAsLin2 for significant species
+#MaAsLin for taxa 
+library(Maaslin2)
+
+#head(meta)
+table(meta$Diabetes)
+table(meta$LIBRA.score.quartile, useNA = "ifany")
+table(meta$Age.baseline, useNA = "ifany")
+table(meta$Race, useNA = "ifany")
+############
+
+#head(input_data)
+table(meta$LIBRA.score, useNA = "ifany")
+names(meta)
+
+gen.fit_LIBRA <- Maaslin2(input_data = input_data, input_metadata = meta, min_prevalence = .5, 
+                          min_abundance = 0.01, normalization = "TSS", 
+                          output = "MaAsLin2_Out_final", 
+                          fixed_effects = c("LIBRA.score","Age","BMI"),
+                          plot_scatter = F,
+                          plot_heatmap = F,
+                          correction="BH",
+                          analysis_method = "LM",
+                          transform = "LOG",
+                          max_significance = 0.3)
+
+
+#####Heatmap for relative abundances
+libra_mas = data.frame(gen.fit_LIBRA$results)
+mas.sig = libra_mas %>% dplyr::filter(pval < 0.05 & value == "LIBRA.score")
+mas.sig_qval = libra_mas %>% dplyr::filter(qval < 0.25 & value == "LIBRA.score")
+
+relative_taxa_adbund_filtered = taxa_species_relative %>% dplyr::filter(row.names(.) %in% mas.sig$feature)
+
+relative_taxa_adbund_filtered_update <- relative_taxa_adbund_filtered %>%
+  rownames_to_column(var = "Species")
+
+relative_taxa_adbund_filtered_update2 <- data.frame(t(relative_taxa_adbund_filtered_update[-1]))
+colnames(relative_taxa_adbund_filtered_update2) <- relative_taxa_adbund_filtered_update[, 1]
+
+relative_taxa_adbund_filtered_update3 <- relative_taxa_adbund_filtered_update2 %>%
+  rownames_to_column(var = "SampleID")
+
+
+relative_taxa_adbund_filtered_update3_melt = melt(relative_taxa_adbund_filtered_update3, id.var="SampleID", variable.name="Species", value.name = "Abundance") 
+
+
+all_taxa_meta_data = plyr::join(relative_taxa_adbund_filtered_update3_melt, meta.in, by="SampleID") %>% 
+  mutate(Species = str_remove(Species, "s__")) %>% 
+  mutate(Species = str_replace(Species, "_", " "))
+
+all_taxa_meta_data2 = all_taxa_meta_data %>% mutate(Abundance_log = log10(Abundance + 1E-10))
+all_taxa_meta_data2$LIBRA.score.quartile = factor(all_taxa_meta_data2$LIBRA.score.quartile, levels = c("4", "3", "2", "1"))
+all_taxa_meta_data3 = all_taxa_meta_data2 %>% arrange(Species, (LIBRA.score)) %>%
+  mutate(Libra.score.half = case_when(LIBRA.score.quartile == "1" | LIBRA.score.quartile == "2" ~ "Lower",
+                                      T~"Upper"))
+
+mas.sig2 = mas.sig %>% mutate(Up_Down = case_when(coef > 0 ~ "Up",
+                                                  T ~ "Down")) %>%
+  arrange((qval))%>% 
+  mutate(feature = str_remove(feature, "s__")) %>% 
+  mutate(feature = str_replace(feature, "_", " "))
+
+mas.sig2$Up_Down = factor(mas.sig2$Up_Down, levels = c("Up", "Down")) 
+#Creates figure for horizontal LFC
+mas_sig_list = mas.sig2 %>% arrange(desc(coef))
+
+
+all_taxa_meta_data_test = all_taxa_meta_data2 %>% 
+  arrange(factor(Species, levels =  mas_sig_list$feature), LIBRA.score)
+
+colvec <- c("#4F94CD", "#FFC125","#CD3333", "#4A4A4A")
+
+
+cols = list( `LIBRA Score Quartile`  = c( "4" = "#4A4A4A", "3" = "#CD3333","2" = "#FFC125","1" = "#4F94CD" ))
+
+
+#####Final heatmap
+all_taxa_meta_data_test = all_taxa_meta_data_test %>%      
+  rename(
+    `LIBRA Score` = LIBRA.score,
+    `LIBRA Score Quartile` = LIBRA.score.quartile)
+
+tdy_hm_rel2=tidyheatmap(df = all_taxa_meta_data_test,
+                        rows = Species,
+                        columns = SampleID,
+                        values = Abundance_log,
+                        #cluster_cols = T,
+                        #clustering_distance_cols = "euclidean",
+                        #clustering_method = "complete",
+                        annotation_col = c(`LIBRA Score Quartile`,  `LIBRA Score`) ,
+                        annotation_colors = cols,
+                        colors = c("#ffffff","#145afc"),
+                        scale= "none",
+                        display_numbers = F,
+                        gaps_col = `LIBRA Score Quartile`,
+                        show_colnames = F)
+#dev.off()
+#adjusts the font in the y.axis labels
+library(grid)
+tdy_hm_rel2$gtable$grobs[[2]]$gp = gpar(fontsize = 8, fontface="italic")
+
+
+
+library(ggplotify)
+#Turns the heatmap to a ggplot item to make it easier to work with
+test_hm = as.ggplot(tdy_hm_rel2) 
+test_hm = test_hm + labs(tag = "B") +
+  annotate("text", x = 0.325, y = 0.00001, label = "Samples") +  
+  coord_cartesian(ylim = c(0, 1), clip = "off")+
+  theme(plot.margin = margin(t = 0, r = -2.4, b = 0.3, l = 0, unit = "cm"),
+        plot.tag = element_text(size = 12, face = "bold"))
+
+ggsave(paste0("Figures/Figure_2b_Libra_Quartile_Heatmap_",Sys.Date(),".jpeg"), test_hm, jpeg, height = 8, width = 16, units = "in" )
+
+
+
+#####figure 2b
+######LFC of significant species####3
+mas.sig2 = mas.sig %>% mutate(Up_Down = case_when(coef > 0 ~ "Up",
+                                                  T ~ "Down")) %>%
+  arrange((qval))%>% 
+  mutate(feature = str_remove(feature, "s__")) %>% 
+  mutate(feature = str_replace(feature, "_", " "))
+
+mas.sig2$Up_Down = factor(mas.sig2$Up_Down, levels = c("Up", "Down")) 
+#Creates figure for horizontal LFC
+mas_sig_list = mas.sig2 %>% arrange(desc(coef))
+
+p3 = ggplot(mas.sig2, aes(x=reorder(feature,coef), y=coef, fill=Up_Down)) +
+  geom_bar(stat='identity') +
+  theme_bw()+
+  theme(legend.position = "none",
+        axis.text.y = element_text(face = "italic"))+
+  scale_x_discrete(position = "top")+
+  #theme(axis.text.y = element_text(face = "italic")) + # Assign specific colors to groups
+  coord_flip() +
+  labs(#title="Species LFC by LIBRA Score", 
+    x="Species", 
+    y="Log Fold Change") +
+  scale_fill_manual(values = c("Up" = "darkred", "Down" = "skyblue"))
+
+ggsave(paste0("Figures/Figure_2a_LFC_Significant_Species_",Sys.Date(),".jpeg"), p3, jpeg, height = 8, width = 12, units = "in" )
+
+
+p3 = p3 + labs(tag = "A") +
+  theme(plot.tag = element_text(size = 12, face = "bold"))
+#Merge the heatmap and LFC figures together
+p2 = ggarrange(p3, test_hm, ncol=1)
+ggsave(paste0("Figures/Figure_2_Significant_Species_LFC_HM_",Sys.Date(),".jpeg"), p2, jpeg, height = 10, width = 12, units = "in" )
+
+mas.sig2_outtable = mas.sig2 %>% dplyr::select(feature, coef, stderr, pval, qval) %>% arrange(desc(coef))
+
+sup_table_2 = flextable(mas.sig2_outtable)
+sup_table_2 = set_caption(sup_table_2, caption = "Supplementary Table 2. Species associated with LIBRA Scores") %>% autofit()
+save_as_docx(sup_table_2, path = "Figures/Supplementary_Table_2_MaAsLin_Results.docx")
+
+print(p2)
+```
+
+
+
+## Biplots
+```{r biplots}
+
+######Figure 3#####Biplots
+#next line will determine which metadata is being piped in so make sure to check before proceeding 
+#head(meta.in)
+meta_env_fit = libra.alpha.all %>% select(SampleID,LIBRA.score.quartile,Coronary.heart.disease, Physical.activity.H.L ,Diabetes,Hypercholesterolemia, BMI,Hypertension, Depression, Current_alcohol, Chronic_kidney_disease, Lifetime_smoking, Healthy_diet, LIBRA.score)
+
+meta_env_fit_update = meta_env_fit %>% mutate(Coronary.heart.disease = if_else(Coronary.heart.disease == "Yes", 1 , 0),
+                                              Physical.activity.H.L = if_else(Physical.activity.H.L == "High", 1, 0), 
+                                              Diabetes = if_else(Diabetes == "Yes", 1,0),
+                                              Hypercholesterolemia = if_else(Hypercholesterolemia=="Yes",1,0),
+                                              Hypertension = if_else(Hypertension=="Yes", 1,0),
+                                              Current_alcohol = if_else(Current_alcohol =="Yes",1,0),
+                                              Chronic_kidney_disease = if_else(Chronic_kidney_disease=="Yes",1,0),
+                                              Lifetime_smoking = if_else(Lifetime_smoking=="Yes",1,0),
+                                              Healthy_diet = if_else(Healthy_diet=="Yes",1,0))
+#matching up metadata with the distance matrix
+#head(x_beta)
+ind <- match(x = rownames(x_beta), table = meta_env_fit_update$SampleID)
+ind1 <- !is.na(ind)
+x1 <- x_beta[ind1,ind1]
+ind2 <- match(x = rownames(x1), table = meta_env_fit_update$SampleID)
+meta.in1 <- meta_env_fit_update[ind2,]
+#this next line should be all true - if not, then something is wrong
+table(rownames(x1) == meta.in1$SampleID) 
+#head(rownames(x1))
+#head(colnames(x1))
+#head(meta.in1$SampleID)
+
+#read in taxa
+#This needs to get renamed
+#head(taxa_species)
+
+taxa_species$names = rownames(taxa_species) 
+taxa_species = taxa_species %>% mutate(names = str_remove(names, "s__")) %>% 
+  mutate(names = str_replace(names, "_", " "))
+rownames(taxa_species) = taxa_species$names
+taxa_species = taxa_species %>% select(!names)
+Taxa <- t(taxa_species)
+Taxa[1:10,1:10]
+
+ind1 <- match(x = colnames(x1), table = rownames(Taxa))
+Taxa1 <- Taxa[ind1,]
+Taxa1[1:10,1:10]
+
+#**Special plot** CCA start
+#this code is for coloring dots on biplot, if not wanting that then next 3 lines can be removed
+meta.in1$LIBRA.score.quartile <- factor(meta.in1$LIBRA.score.quartile, levels=c("4", "3", "2","1"))
+with(meta.in1, levels(LIBRA.score.quartile))
+scl <- 2
+#colvec <- c("red", "black", "lightgreen", "royalblue")
+colvec <- rev(c("#4F94CD", "#FFC125","#CD3333", "#4A4A4A"))
+
+#CCA start
+pca_w=capscale(x1~1, data=meta.in1[,-c(1,2)])
+#####envfit for libra variables
+(fit1=envfit(pca_w, meta.in1[,-c(1,2)], na.rm = T))
+#p.max in the code below will determine which variables end up on the graph - adjust for more or less
+#plot(fit1, col="skyblue", p.max=0.3)
+head(fit1)
+###envfit for species
+#p.max in the code below will determine which taxa end up on the graph - adjust for more or less
+fit2=envfit(pca_w, Taxa1, na.rm = T)
+#plot(fit2, col="darkred",p.max=0.002)
+#head(fit2)
+
+####Pulls together data from pca and envfit
+pca_data_mds = data.frame(vegan::scores(pca_w)$sites)
+#pca_data_mds = pca_data %>% select(MDS1,MDS2)
+pca_data_mds$SampleID = rownames(pca_data_mds)
+
+
+libra_fit = data.frame(vegan::scores(fit1, "vectors")) *ordiArrowMul(fit1)
+libra_pca_pval = data.frame(fit1$vectors$pvals) %>% filter(fit1.vectors.pvals < 0.3)
+libra_fit_filter <- libra_fit %>%
+  filter(row.names(.) %in% rownames(libra_pca_pval)) %>%
+  mutate(indicator= "libra")
+
+
+species_fit = data.frame(vegan::scores(fit2, "vectors")) *ordiArrowMul(fit2)
+species_pca_pval = data.frame(fit2$vectors$pvals) %>% filter(fit2.vectors.pvals <= 0.002)
+species_fit_filter <- species_fit %>%
+  filter(row.names(.) %in% rownames(species_pca_pval)) %>%
+  mutate(indicator= "species")
+
+
+pca_data_mds = data.frame(vegan::scores(pca_w)$sites)
+#pca_data_mds = pca_data %>% select(MDS1,MDS2)
+pca_data_mds$SampleID = rownames(pca_data_mds)
+pca_data_full = full_join(meta_env_fit_update,pca_data_mds, by="SampleID" )
+pca_data_full$LIBRA.score.quartile = factor(pca_data_full$LIBRA.score.quartile, levels=c("4","3","2","1"))
+
+colvec <- rev(c("#4F94CD", "#FFC125","#CD3333", "#4A4A4A"))
+
+
+####ggplot for species biplot
+species_biplot= ggplot(pca_data_full, aes(x=MDS1, y=MDS2))+
+  geom_point(aes(color= LIBRA.score.quartile))+
+  scale_colour_manual(values = colvec)+
+  theme(panel.background = element_blank(), panel.grid.minor = element_blank(),panel.grid.major = element_blank())+
+  geom_segment(aes(x = 0, y = 0, xend = MDS1, yend = MDS2), 
+               data = libra_fit_filter, size =1, alpha = 0.5, colour = "skyblue")+
+  ggrepel::geom_text_repel(max.overlaps=nrow(libra_fit_filter),data = libra_fit_filter, aes(x = MDS1, y = MDS2), 
+                           label = row.names(libra_fit_filter), colour = "skyblue",nudge_x=-0.05,nudge_y=0.05)+
+  geom_segment(aes(x = 0, y = 0, xend = MDS1, yend = MDS2), 
+               data = species_fit_filter, size =1, alpha = 0.5, colour = "darkred")+
+  ggrepel::geom_text_repel(max.overlaps=15,data = species_fit_filter, aes(x = MDS1, y = MDS2), 
+                           label = row.names(species_fit_filter), colour = "darkred",nudge_y=-0.03,nudge_x=0.01) 
+
+species_biplot = species_biplot + labs(tag = "B") +
+  theme(plot.tag = element_text(size = 12, face = "bold"))
+
+ggsave(paste0("Figures/Figure_3b_Biplot_Species_",Sys.Date(),".jpeg"), species_biplot, jpeg, height = 8, width = 12, units = "in" )
+
+
+
+#######Takes bray-curtis distance for phylum level biplot
+#head(input_data_phylum)
+#Removing virus and archae samples from analysis
+input_data_phylum = input_data_phylum[!(row.names(input_data_phylum) %in% c("p__Viruses_noname","p__Eukaryota_noname", "p__Euryarchaeota")), ]
+
+trans_taxa_table_1 = t(data.frame(input_data_phylum))
+trans_taxa_table_1 = data.frame(trans_taxa_table_1)
+trans_taxa_table_1$names = rownames(trans_taxa_table_1)
+trans_taxa_table_1 = trans_taxa_table_1 %>% mutate(names = str_replace(names, "X", "")) 
+rownames(trans_taxa_table_1) = trans_taxa_table_1$names
+trans_taxa_table_1= trans_taxa_table_1 %>% select(!names)
+
+#matching up metadata with the distance matrix
+ind <- match(x = rownames(x_beta), table = meta_env_fit_update$SampleID)
+ind1 <- !is.na(ind)
+x1 <- x_beta[ind1,ind1]
+ind2 <- match(x = rownames(x1), table = meta_env_fit_update$SampleID)
+meta.in1 <- meta_env_fit_update[ind2,]
+#this next line should be all true - if not, then something is wrong
+table(rownames(x1) == meta.in1$SampleID) 
+#head(rownames(x1))
+#head(colnames(x1))
+#head(meta.in1$SampleID)
+#read in taxa
+
+#head(input_data_phylum)
+input_data_phylum$names = rownames(input_data_phylum) 
+input_data_phylum = input_data_phylum %>% mutate(names = str_remove(names, "p__")) %>% 
+  mutate(names = str_replace(names, "_", " "))
+rownames(input_data_phylum) = input_data_phylum$names
+input_data_phylum = input_data_phylum %>% select(!names)
+
+Taxa <- t(input_data_phylum)
+#head(Taxa)
+
+ind1 <- match(x = colnames(x1), table = rownames(Taxa))
+Taxa1 <- Taxa[ind1,]
+#head(Taxa1)
+
+#**Special plot** CCA start
+#this code is for coloring dots on biplot, if not wanting that then next 3 lines can be removed
+meta.in1$LIBRA.score.quartile <- factor(meta.in1$LIBRA.score.quartile, levels=c("4", "3", "2","1"))
+with(meta.in1, levels(LIBRA.score.quartile))
+scl <- 2
+#colvec <- c("red", "black", "lightgreen", "royalblue")
+colvec <- rev(c("#4F94CD", "#FFC125","#CD3333", "#4A4A4A"))
+
+#CCA start
+pca_w=capscale(x1~1, data=meta.in1[,-c(1,2)])
+#envfit for LIBRA factors
+(fit1=envfit(pca_w, meta.in1[,-c(1,2)], na.rm = T))
+#p.max in the code below will determine which variables end up on the graph - adjust for more or less
+head(fit1)
+###
+#envfit for phylum level
+#p.max in the code below will determine which taxa end up on the graph - adjust for more or less
+fit2=envfit(pca_w, Taxa1, na.rm = T)
+#head(fit2)
+
+
+pca_data_mds = data.frame(vegan::scores(pca_w)$sites)
+#pca_data_mds = pca_data %>% select(MDS1,MDS2)
+pca_data_mds$SampleID = rownames(pca_data_mds)
+
+libra_fit = data.frame(vegan::scores(fit1, "vectors")) *ordiArrowMul(fit1)
+libra_pca_pval = data.frame(fit1$vectors$pvals) %>% filter(fit1.vectors.pvals <= 0.9)
+libra_fit_filter <- libra_fit %>%
+  filter(row.names(.) %in% rownames(libra_pca_pval)) %>%
+  mutate(indicator= "libra")
+
+
+phylum_fit = data.frame(vegan::scores(fit2, "vectors")) *ordiArrowMul(fit2)
+phylum_pca_pval = data.frame(fit2$vectors$pvals) %>% filter(fit2.vectors.pvals <= 0.9)
+phylum_fit_filter <- phylum_fit %>%
+  filter(row.names(.) %in% rownames(phylum_pca_pval)) %>%
+  mutate(indicator= "species")
+
+all_fit_lines = bind_rows(libra_fit_filter,phylum_fit_filter)
+pca_data_full = full_join(meta_env_fit_update,pca_data_mds, by="SampleID" )
+pca_data_full$LIBRA.score.quartile = factor(pca_data_full$LIBRA.score.quartile, levels=c("4","3","2","1"))
+
+colvec <- rev(c("#4F94CD", "#FFC125","#CD3333", "#4A4A4A"))
+
+phylum_biplot = ggplot(pca_data_full, aes(x=MDS1, y=MDS2))+
+  geom_point(aes(color= LIBRA.score.quartile))+
+  scale_colour_manual(values = colvec)+
+  theme(panel.background = element_blank(), panel.grid.minor = element_blank(),panel.grid.major = element_blank())+
+  geom_segment(aes(x = 0, y = 0, xend = MDS1, yend = MDS2), 
+               data = libra_fit_filter, size =1, alpha = 0.5, colour = "skyblue")+
+  ggrepel::geom_text_repel(max.overlaps=nrow(libra_fit_filter),data = libra_fit_filter, aes(x = MDS1, y = MDS2), 
+                           label = row.names(libra_fit_filter), colour = "skyblue",nudge_x=-0.05,nudge_y=0.05)+
+  geom_segment(aes(x = 0, y = 0, xend = MDS1, yend = MDS2), 
+               data = phylum_fit_filter, size =1, alpha = 0.5, colour = "darkred")+
+  ggrepel::geom_text_repel(max.overlaps=15,data = phylum_fit_filter, aes(x = MDS1, y = MDS2), 
+                           label = row.names(phylum_fit_filter), colour = "darkred",nudge_y=0.01,nudge_x=0.01) 
+
+phylum_biplot = phylum_biplot + labs(tag = "A") +
+  theme(plot.tag = element_text(size = 12, face = "bold"))
+
+ggsave(paste0("Figures/Figure_3a_Biplot_Species_",Sys.Date(),".jpeg"), phylum_biplot, jpeg, height = 8, width = 12, units = "in" )
+biplot_organisms = ggarrange(phylum_biplot, species_biplot, nrow=2)
+ggsave(paste0("Figures/Figure_3_Biplot_Organisms_",Sys.Date(),".jpeg"), biplot_organisms, jpeg, height = 12, width = 14, units = "in" )
+
+print(biplot_organisms)
+
+```
+
+
+## Pathway Analysis 
+
+```{r pathway}
+
+#####Pathway Analysis
+#Figure 3
+####Volcano
+#DeSeq for genes and pathways
+#Differential Abundance with DESeq2 - done at genus level
+detach("package:microbiome", unload = TRUE)
+detach("package:phyloseq", unload = TRUE)
+library(DESeq2)
+library(pheatmap)
+library(org.Mm.eg.db)
+library(DOSE)
+library(pathview)
+library(clusterProfiler)
+library(AnnotationHub)
+library(ensembldb)
+library(tidyverse)
+library(apeglm)
+#head(dat_pathway)
+
+#dat[-1] <-sweep(dat[-1], 2, colSums(dat[,-1]), `/`) * 10000
+#Round data so that all the data are integers
+dat_pathway <- dat_pathway %>% 
+  dplyr::mutate_if(is.numeric, round)
+keep_genes <- rowSums( dat_pathway > 100 ) >= 42
+dat_pathway <- dat_pathway[keep_genes,]
+
+dat_pathway <- as.matrix(dat_pathway)
+#head(meta)
+
+#align data
+ind <- match(x = colnames(dat_pathway), table = rownames(meta))
+meta1 <- meta[ind,] 
+meta1[1:10, 1:10]
+#Check that data are aligned
+all(colnames(dat_pathway) == rownames(meta1))
+#make deseq object
+#head(meta1)
+library(caret)
+#scale and center data
+meta1_scale_factors = subset(meta1, select = c(Age, BMI, LIBRA.score))
+meta1_scaled  = scale(meta1_scale_factors, scale = T, center = T)
+
+#Create deseq object
+dds <- DESeqDataSetFromMatrix(countData = dat_pathway, colData = meta1_scaled, design = ~ Age + BMI + LIBRA.score)
+#generate normalized counts 
+dds <- estimateSizeFactors(dds)
+sizeFactors(dds)
+normalized_counts <- counts(dds, normalized=TRUE)
+
+#QC for DE analysis using DESeq2
+#If input file is very large > 800 MB then, use the below command
+rld <- varianceStabilizingTransformation(dds, blind=T)
+
+#PCA 
+plotPCA(rld, intgroup="LIBRA.score")
+#Hierarchical Clustering
+### Extract the rlog matrix from the object
+rld_mat <- assay(rld)
+rld_cor <- cor(rld_mat)
+pheatmap(rld_cor)
+#differential expression analysis
+dds <- DESeq(dds)
+plotDispEsts(dds)
+res <- results(dds)
+#shrinkage factor to normalize dataa
+dds_shrink = lfcShrink(dds = dds, res = res, coef="LIBRA.score")
+summary(res)
+summary(dds_shrink)
+summary(dds)
+
+plotMA(res, ylim=c(-2,2))
+# Create background dataset for hypergeometric testing using all genes tested for significance in the results
+all_genes <- as.character(rownames(dds_shrink))
+
+# Extract significant results
+signif_res <- dds_shrink[dds_shrink$padj < 0.3 & dds_shrink$pvalue < 0.05 & !is.na(dds_shrink$padj), ]
+
+plotMA(signif_res, ylim=c(-4,4))
+#This will be empty if no genes were significant
+signif_genes <- as.character(rownames(signif_res))
+
+
+#Below is old code to export sig-taxa
+sigtab = cbind(as(dds_shrink, "data.frame"), all_genes)
+
+
+##Function to create volcano plot
+volcplot <- function(data, padj_threshold = 0.05, fc = 1.0354, plot_title = 'Volcano Plot', plot_subtitle = NULL, genelist_vector = genes$all_genes, genelist_filter = FALSE) {
+  
+  # Set the fold-change thresholds
+  neg_log2fc <- -log2(fc)
+  pos_log2fc <- log2(fc)
+  
+  # Make a dataset for plotting, add the status as a new column
+  plot_ready_data <- data %>%
+    mutate_at('padj', ~replace(.x, is.na(.x), 1)) %>%
+    mutate_at('log2FoldChange', ~replace(.x, is.na(.x), 0)) %>%
+    mutate(
+      log2fc_threshold = ifelse(log2FoldChange >= pos_log2fc & pvalue <= padj_threshold, 'up',
+                                ifelse(log2FoldChange <= neg_log2fc & pvalue <= padj_threshold, 'down', 'ns')
+      )
+    ) %>%
+    mutate(all_genes = replace_na(all_genes, 'none'))
+  
+  if (genelist_filter) {
+    plot_ready_data <- plot_ready_data %>% dplyr::filter(all_genes %in% genelist_vector)
+  }
+  
+  if(!is.null(genelist_vector)) {
+    plot_ready_data <- plot_ready_data %>% mutate(all_genes = ifelse(all_genes %in% genelist_vector & pvalue < padj_threshold & log2fc_threshold != 'ns', all_genes, ''))
+  }
+  
+  # Get the number of up, down, and unchanged genes
+  up_genes <- plot_ready_data %>% dplyr::filter(log2fc_threshold == 'up') %>% nrow()
+  down_genes <- plot_ready_data %>% dplyr::filter(log2fc_threshold == 'down') %>% nrow()
+  unchanged_genes <- plot_ready_data %>% dplyr::filter(log2fc_threshold == 'ns') %>% nrow()
+  
+  # Make the labels for the legend
+  legend_labels <- c(
+    str_c('Up: ', up_genes),
+    str_c('NS: ', unchanged_genes),
+    str_c('Down: ', down_genes)
+  )
+  
+  # Set the x axis limits, rounded to the next even number
+  x_axis_limits <- DescTools::RoundTo(
+    max(abs(plot_ready_data$log2FoldChange)),
+    0.5,
+    ceiling
+  )
+  
+  # Set the plot colors
+  plot_colors <- c(
+    'up' = 'darkred',
+    'ns' = 'gray',
+    'down' = 'dodgerblue1'
+  )
+  
+  
+  # Make the plot, these options are a reasonable strting point
+  plot <- ggplot(plot_ready_data) +
+    geom_point(
+      alpha = 0.25,
+      size = 1.5
+    ) +
+    aes(
+      x = log2FoldChange,
+      y = -log10(pvalue),
+      color = log2fc_threshold,
+      label = all_genes
+    ) +
+    geom_vline(
+      xintercept = c(neg_log2fc, pos_log2fc),
+      linetype = 'dashed'
+    ) +
+    geom_hline(
+      yintercept = -log10(padj_threshold),
+      linetype = 'dashed'
+    ) +
+    scale_x_continuous(
+      'log2(FC)',
+      limits = c(-x_axis_limits, x_axis_limits)
+    ) +
+    scale_color_manual(
+      values = plot_colors#,
+      #labels = legend_labels
+    ) +
+    #labs(
+    #  color = str_c(fc, '-fold, padj ≤', padj_threshold),
+    #  title = plot_title,
+    #  subtitle = plot_subtitle
+    #) +
+    theme_bw(base_size = 24) +
+    theme(legend.position = "none",
+          aspect.ratio = 1,
+          axis.text = element_text(color = 'black'),
+          legend.margin = margin(0, 0, 0, 0),
+          legend.box.margin = margin(0, 0, 0, 0),  # Reduces dead area around legend
+          legend.spacing.x = unit(0.2, 'cm'),
+          legend.title = element_blank()
+    )
+  
+  # Add gene labels if needed
+  if (!is.null(genelist_vector)) {
+    plot <- plot +
+      geom_label_repel(
+        size = 2.5,
+        force = 1,
+        max.overlaps = 100000,
+        nudge_x = -.05,
+        nudge_y = -.20,
+        segment.color = 'black',
+        min.segment.length = 0,
+        show.legend = FALSE
+      )
+  }
+  plot
+}
+
+
+sigtab2 = na.omit(sigtab)
+rownames(sigtab2) <- NULL
+
+#pulls out genes for labeling
+genes = sigtab2 %>% dplyr::filter(log2FoldChange > log2(1.0354) | log2FoldChange< -log2(1.0354) ) %>%
+  arrange(desc(abs(log2FoldChange))) %>% slice_head(n=6)
+
+out_table = sigtab2 %>% dplyr::filter(padj < 0.3 & pvalue < 0.05) %>%
+  arrange(desc(log2FoldChange)) 
+
+#creates volcano plot and prints
+library(ggrepel)
+volc = volcplot(sigtab2)
+
+ggsave(paste0("Figures/Figure_4_Pathway_Volcano_Plot_",Sys.Date(),".jpeg"), volc, jpeg, height = 8, width = 12, units = "in" )
+
+
+#Table of signifincat pathways
+out_table_pathways = out_table %>% dplyr::select(all_genes, log2FoldChange, lfcSE, pvalue, padj) %>% arrange(desc(log2FoldChange))
+
+sup_table_3 = flextable(out_table_pathways)
+sup_table_3 = set_caption(sup_table_3, caption = "Supplementary Table 3. Metabolic Pathways associated with LIBRA Scores") %>% autofit()
+save_as_docx(sup_table_3, path = "Figures/Supplementary_Table_3_DESeq_Results.docx")
+
+print(volc)
+```
+
+
+
+## Supplemental
+```{r additional}
+######Extra for MaAsLin
+#MaAsLin analysis for each libra factor
+mal_fun= function(effect,ref){
+  fit = Maaslin2(input_data = input_data, input_metadata = meta, min_prevalence = .5, 
+                 min_abundance = .01, normalization = "TSS", 
+                 output = paste0("MaAsLin_Out_species-level_",effect,"_",Sys.Date()), 
+                 fixed_effects = effect,
+                 reference = ref,
+                 plot_scatter = F,
+                 plot_heatmap = F,                          
+                 correction="BH",
+                 analysis_method = "LM",
+                 transform = "LOG",
+                 max_significance = 0.3)#,
+  #reference = "Current_alcohol,No")}
+  return(fit)
+}
+
+meta$Physical.inactivity_lib.weight = as.factor(meta$Physical.inactivity_lib.weight)
+#head(meta$Healthy_diet)
+depressed_mal = mal_fun("Depressed", "Depressed,No")
+
+obese_mal = mal_fun("Obese", "Obese,No")
+
+alc_mal = mal_fun("Current_alcohol","Current_alcohol,No")
+
+chd_mal = mal_fun("Coronary.heart.disease", "Coronary.heart.disease,No")
+
+cdd_mal = mal_fun("Chronic_kidney_disease", "Chronic_kidney_disease,No")
+
+diabetes_mal = mal_fun("Diabetes","Diabetes,No")
+
+Hypercholesterolemia_mal = mal_fun("Hypercholesterolemia", "Hypercholesterolemia,No")
+
+Lifetime_smoking_mal = mal_fun("Lifetime_smoking", "Lifetime_smoking,No")
+
+Hypertension_mal = mal_fun("Hypertension","Hypertension,No")
+
+Physical.inactivity_lib.weight_mal = mal_fun("Physical.inactivity_lib.weight", "Physical.inactivity_lib.weight,0")
+
+Healthy_diet_mal = mal_fun("Healthy_diet", "Healthy_diet,Yes")
+
+
+
+
+#####Supplemental figure 2
+####################################################################
+#CCA for pathways to make biplot
+#import distance matrix
+#head(x_pathway)
+
+####
+#*****************************IMPORTANT******************************************
+#next line will determine which metadata is being piped in so make sure to check before proceeding 
+#meta.in <- read.csv("LIBRA/LIBRA_variables_CCA_noNAs_021225.csv", stringsAsFactors = T)
+#matching up metadata with the distance matrix
+
+ind <- match(x = rownames(x_pathway), table = meta_env_fit_update$SampleID)
+ind1 <- !is.na(ind)
+x1 <- x_pathway[ind1,ind1]
+ind2 <- match(x = rownames(x1), table = meta_env_fit_update$SampleID)
+meta.in1 <- meta_env_fit_update[ind2,]
+#this next line should be all true - if not, then something is wrong
+table(rownames(x1) == meta.in1$SampleID) 
+#rownames(x1)
+#colnames(x1)
+#head(meta.in1$SampleID)
+#read in pathways
+pathway_abundance <- read.csv(file = '/Volumes/B4_Backup/Stamper_Mac_VA_files_060325/NFL-grant/Metagenomic_data/filtered functional tables/uniref-pathway-filtered-absolute_NFL1.csv', 
+                              row.names = 1, header = T, check.names = F)
+
+Taxa <- t(pathway_abundance)
+Taxa[1:10,1:10]
+
+ind1 <- match(x = colnames(x1), table = rownames(Taxa))
+Taxa1 <- Taxa[ind1,]
+Taxa1[1:10,1:10]
+
+#Uses only pathways that are significant for DESeq
+#colnames(Taxa1)
+ind <- match(colnames(Taxa1), rownames(signif_res))
+#head(ind)
+ind1 <- !is.na(ind)
+Taxa2 <- Taxa1[,ind1]
+colnames(Taxa2)
+
+
+#**Special plot** CCA start
+#this code is for coloring dots on biplot by quartile
+meta.in$LIBRA.score.quartile <- as.factor(meta.in$LIBRA.score.quartile)
+with(meta.in, levels(LIBRA.score.quartile))
+scl <- 2
+
+#CCA start
+pca_w=capscale(x1~1, data=meta.in1[,-1])
+fit1=envfit(pca_w, meta.in1[,-1], na.rm = T)
+#p.max in the code below will determine which variables end up on the graph - adjust for more or less
+#p.max in the code below will determine which taxa end up on the graph - adjust for more or less
+fit2=envfit(pca_w, Taxa2, na.rm = T)
+
+
+
+pca_data_mds = data.frame(vegan::scores(pca_w)$sites)
+#pca_data_mds = pca_data %>% select(MDS1,MDS2)
+pca_data_mds$SampleID = rownames(pca_data_mds)
+
+libra_fit = data.frame(vegan::scores(fit1, "vectors")) *ordiArrowMul(fit1)
+libra_pca_pval = data.frame(fit1$vectors$pvals) %>% dplyr::filter(fit1.vectors.pvals <= 0.5)
+libra_fit_filter <- libra_fit %>%
+  dplyr::filter(row.names(.) %in% rownames(libra_pca_pval)) %>%
+  mutate(indicator= "libra")
+
+
+phylum_fit = data.frame(vegan::scores(fit2, "vectors")) *ordiArrowMul(fit2)
+phylum_pca_pval = data.frame(fit2$vectors$pvals) %>% dplyr::filter(fit2.vectors.pvals <= 0.001)
+phylum_fit_filter <- phylum_fit %>%
+  dplyr::filter(row.names(.) %in% rownames(phylum_pca_pval)) %>%
+  mutate(indicator= "species")
+
+all_fit_lines = bind_rows(libra_fit_filter,phylum_fit_filter)
+pca_data_full = full_join(meta_env_fit_update,pca_data_mds, by="SampleID" )
+pca_data_full$LIBRA.score.quartile = factor(pca_data_full$LIBRA.score.quartile, levels=c("4","3","2","1"))
+
+colvec <- rev(c("#4F94CD", "#FFC125","#CD3333", "#4A4A4A"))
+
+pathway_biplot = ggplot(pca_data_full, aes(x=MDS1, y=MDS2))+
+  geom_point(aes(color= LIBRA.score.quartile))+
+  scale_colour_manual(values = colvec)+
+  theme(panel.background = element_blank(), panel.grid.minor = element_blank(),panel.grid.major = element_blank())+
+  geom_segment(aes(x = 0, y = 0, xend = MDS1, yend = MDS2), 
+               data = libra_fit_filter, size =1, alpha = 0.5, colour = "skyblue")+
+  ggrepel::geom_text_repel(max.overlaps=nrow(libra_fit_filter),data = libra_fit_filter, aes(x = MDS1, y = MDS2), 
+                           label = row.names(libra_fit_filter), colour = "skyblue",nudge_x=-0.01,nudge_y=0.01)+
+  geom_segment(aes(x = 0, y = 0, xend = MDS1, yend = MDS2), 
+               data = phylum_fit_filter, size =1, alpha = 0.5, colour = "darkred")+
+  ggrepel::geom_text_repel(max.overlaps=15,data = phylum_fit_filter, aes(x = MDS1, y = MDS2), 
+                           label = row.names(phylum_fit_filter), colour = "darkred",nudge_y=0.01,nudge_x=0.01) 
+
+ggsave(paste0("Figures/Figure_supp_2_Biplot_Pathway_",Sys.Date(),".jpeg"), pathway_biplot, jpeg, height = 8, width = 12, units = "in" )
+
+
+
+
+###Extra
+########Figure 2#######
+####relative abundance of significant species######
+#head(taxa_species)
+
+#head(mas.sig)
+
+mas.sig_filter = mas.sig %>% dplyr::filter(qval < 0.1)
+
+
+relative_taxa_adbund_filtered = taxa_species_relative %>% dplyr::filter(row.names(.) %in% mas.sig$feature)
+
+relative_taxa_adbund_filtered_update <- relative_taxa_adbund_filtered %>%
+  rownames_to_column(var = "Species")
+
+relative_taxa_adbund_filtered_update2 <- data.frame(t(relative_taxa_adbund_filtered_update[-1]))
+colnames(relative_taxa_adbund_filtered_update2) <- relative_taxa_adbund_filtered_update[, 1]
+
+relative_taxa_adbund_filtered_update3 <- relative_taxa_adbund_filtered_update2 %>%
+  rownames_to_column(var = "SampleID")
+
+relative_taxa_adbund_filtered_update3_melt = melt(relative_taxa_adbund_filtered_update3, id.var="SampleID", variable.name="Species", value.name = "Abundance") 
+
+
+all_taxa_meta_data = merge(relative_taxa_adbund_filtered_update3_melt, meta.in, by="SampleID")
+
+abundance_plot = ggplot(all_taxa_meta_data, aes(y=Abundance, x=LIBRA.score)) + 
+  geom_point() +
+  facet_wrap(~Species, scales="free") +
+  geom_smooth(method="lm") +
+  theme(strip.text.x = element_text(face = "italic")) # For x-axis facet titles)
+ggsave(paste0("Figures/Figure_extra_2_Abundance_Change_Libra_Significant_Species_",Sys.Date(),".jpeg"), abundance_plot, jpeg, height = 20, width = 25, units = "in" )
+
+
+```
